@@ -1,0 +1,6 @@
+#!/bin/bash -ex
+
+pacman -Syu --noconfirm \
+    rust cmake make \
+    qt5-svg qt5-quickcontrols qt5-declarative qt5-graphicaleffects \
+    adobe-source-code-pro-fonts adobe-source-sans-pro-fonts

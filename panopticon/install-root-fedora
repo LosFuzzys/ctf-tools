@@ -1,0 +1,8 @@
+#!/bin/bash -ex
+
+dnf install -y \
+        rust cargo \
+        gcc-c++ cmake make qt5-qtdeclarative-devel qt5-qtquickcontrols \
+        qt5-qtgraphicaleffects qt5-qtsvg-devel \
+        adobe-source-sans-pro-fonts \
+        adobe-source-code-pro-fonts

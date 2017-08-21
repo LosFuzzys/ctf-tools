@@ -1,0 +1,13 @@
+#!/bin/bash -ex
+
+apt-get install -y \
+        rustc cargo \
+        qt5-default qtdeclarative5-dev libqt5svg5-dev \
+        qml-module-qtquick-controls qml-module-qttest \
+        qml-module-qtquick2 qml-module-qtquick-layouts \
+        qml-module-qtgraphicaleffects qml-module-qtqml-models2 \
+        qml-module-qtquick-dialogs \
+        qtbase5-private-dev pkg-config \
+        git build-essential cmake \
+        qml-module-qt-labs-folderlistmodel \
+        qml-module-qt-labs-settings \
