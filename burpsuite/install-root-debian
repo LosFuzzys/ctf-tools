@@ -2,10 +2,14 @@
 set -eu -o pipefail
 
 case "$(lsb_release -cs)" in
-	xenial)
+	xenial | artful)
 		apt-get -o Dpkg::Options::="--force-overwrite" -y install openjdk-9-jre
 		;;
-	*)
+	trusty)
 		apt-get -y install openjdk-7-jre
+		;;
+	*)
+        # install default jre and hope for the best...
+		apt-get -y install default-jre
 		;;
 esac
