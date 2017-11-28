@@ -2,6 +2,8 @@
 set -eu -o pipefail
 # set -x
 
+CTF_TOOLS_ROOT=$(dirname "${BASH_SOURCE[0]}")/..
+
 function usage()
 {
 	cat <<END
@@ -32,15 +34,30 @@ function tool_log()
 	echo "$(tput setaf 4 2>/dev/null)TOOLS | $TOOL |$(tput sgr0 2>/dev/null) $@"
 }
 
-function setup_log()
+
+function tool_log_error()
 {
-	printf "$(tput setaf 6 2>/dev/null)SETUP | $(tput sgr0 2>/dev/null) $@"
+	echo "$(tput setaf 1 2>/dev/null)TOOLS | $TOOL |$(tput sgr0 2>/dev/null) $@"
 }
 
+function tool_log_warn()
+{
+	echo "$(tput setaf 3 2>/dev/null)TOOLS | $TOOL |$(tput sgr0 2>/dev/null) $@"
+}
 
 function log()
 {
-	printf "$(tput setaf 2 2>/dev/null)ctf-tools | $(tput sgr0 2>/dev/null) $@"
+	printf "$(tput setaf 2 2>/dev/null)ctf-tools | $(tput sgr0 2>/dev/null) $@\n"
+}
+
+function log_error()
+{
+	printf "$(tput setaf 1 2>/dev/null)ctf-tools | ERROR: $(tput sgr0 2>/dev/null) $@\n"
+}
+
+function log_warn()
+{
+	printf "$(tput setaf 3 2>/dev/null)ctf-tools | WARNING: $(tput sgr0 2>/dev/null) $@\n"
 }
 
 
@@ -82,7 +99,7 @@ function base_build_setup_debian()
 			sudo dpkg --add-architecture i386
 			sudo apt-get update
 		else
-			setup_log "Certain tools need i386 libraries (enable with 'dpkg --add-architecture i386; apt-get update')."
+			log_warn "Certain tools need i386 libraries (enable with 'dpkg --add-architecture i386; apt-get update')."
 		fi
 	fi
 }
@@ -153,7 +170,7 @@ function base_build_setup()
 			base_build_setup_fedora
 			;;
 		*)
-			setup_log "Cannot detect or unsupported distribution"
+			setup_warn "Cannot detect or unsupported distribution - dependencies might be missing"
 	esac
 
 	## setup PATH for several shells
@@ -196,6 +213,291 @@ EOF
 
 function is_tool_installed() {
 	git status --ignored "$1" | egrep -q 'Untracked|Ignored'
+}
+
+
+function manage_setup() {
+	base_build_setup "$DISTRI"
+}
+
+function manage_list() {
+	for t in ./*
+	do
+		[ ! -e "$t/install" ] && continue
+
+		if [[ "$1" == "" ]]; then
+			echo "$t"
+		else
+			if is_tool_installed "$t"; then
+				if [[ "$1" == "-i" ]]; then
+					echo "$t"
+				fi
+			else
+				if [[ "$1" == "-u" ]]; then
+					echo "$t"
+				fi
+			fi
+		fi
+	done
+}
+
+function manage_bin() {
+	cd bin
+	if [ -d ../$TOOL/bin ]; then
+		ln -sf ../$TOOL/bin/* .
+		tool_log "bin symlinks updated"
+	fi
+	cd ..
+}
+
+function manage_unbin() {
+	cd bin
+	if [ -d ../$TOOL/bin ]; then
+		for l in ../$TOOL/bin/*; do
+			rm $(basename "$l")
+		done
+		tool_log "bin symlinks updated"
+	fi
+	cd ..
+}
+
+function manage_install() {
+	cd $TOOL
+	if [ "$FORCE" -eq 0 ] && is_tool_installed "."
+	then
+		tool_log "appears to already be installed. Uninstall first?"
+		exit 0
+	fi
+
+	# the first line in all install and uninstall scripts should have the -e flag, otherwise fail
+	if [ $(for i in install* uninstall test; do if [ -e "$i" ]; then head -1 "$i"; fi; done | sort | uniq | grep -v '^#!/bin/bash -ex$' | wc -l) -ne 0 ];
+	then
+		tool_log_error "not all install/uninstall/test scripts start with '#!/bin/bash -ex', which is a must for accurate testing."
+		exit 1
+	fi
+
+	tool_log "starting install, logging to $PWD/install.log"
+	rm -f install.log
+
+	# first get distri specific dependencies
+	if [[ $(find . -name 'install-root*' | wc -l) -ge 1 ]]; then
+		INSTALL_ROOT_SCRIPT="./install-root-$DISTRI"
+		# use debian install script if we are on ubuntu and no ubuntu
+		# specific install script exists
+		if [[ "$DISTRI" == "ubuntu" \
+			&& ! -x "$INSTALL_ROOT_SCRIPT" \
+			&& -x "./install-root-debian" ]]
+		then
+			INSTALL_ROOT_SCRIPT="./install-root-debian"
+		fi
+		if [[ -x "$INSTALL_ROOT_SCRIPT" && "$ALLOW_SUDO" -eq 1 ]]; then
+			if ! sudo env DISTRI=$DISTRI "$INSTALL_ROOT_SCRIPT" >> install.log 2>&1;
+			then
+				tool_log "INSTALL FAILED"
+				cat install.log >&2
+				exit 1
+			fi
+		else
+			tool_log_warn "Warning: make sure build dependencies are installed!"
+		fi
+	fi
+
+	# execute install script
+	set +e
+	if [ "$VERBOSE_OUTPUT" -eq 1 ]; then
+		DISTRI=$DISTRI ./install 2>&1 | tee -a install.log
+	else
+		DISTRI=$DISTRI ./install >>install.log 2>&1
+	fi
+	INSTALL_FAILED=$?
+	set -e
+
+	if [ "$INSTALL_FAILED" -eq 0 ]; then
+		tool_log "install finished"
+	else
+		tool_log_error "install failed"
+		cat install.log >&2
+		exit 1
+	fi
+
+	cd ..
+}
+
+function manage_uninstall() {
+	cd $TOOL
+
+	local UNINSTALL_FAILED
+
+	tool_log "starting uninstall, logging to $PWD/uninstall.log"
+	if [ -x ./uninstall ]; then 
+		set +e
+		if [ "$VERBOSE_OUTPUT" -eq 1 ]; then
+			DISTRI=$DISTRI ./uninstall 2>&1 | tee -a uninstall.log
+		else
+			DISTRI=$DISTRI ./uninstall >>uninstall.log 2>&1
+		fi
+		UNINSTALL_FAILED=$?
+		set -e
+
+		if [ "$UNINSTALL_FAILED" -ne 0 ]; then
+			tool_log_error "uninstall failed"
+			cat uninstall.log >&2
+			exit 1
+		fi
+	fi
+
+	git clean -dffx . >/dev/null 2>&1
+	tool_log "uninstall finished"
+
+	cd ..
+}
+
+
+function manage_upgrade() {
+	cd $TOOL
+	if is_tool_installed "."; then
+		if [ -x ./upgrade ]
+		then
+			manage_unbin
+
+			set +e
+			if [ "$VERBOSE_OUTPUT" -eq 1 ]; then
+				DISTRI=$DISTRI ./upgrade 2>&1 | tee -a upgrade.log
+			else
+				DISTRI=$DISTRI ./upgrade >>upgrade.log 2>&1
+			fi
+			INSTALL_FAILED=$?
+			set -e
+
+			if [ "$INSTALL_FAILED" -eq 0 ]; then
+				tool_log "upgrade complete"
+			else
+				tool_log_error "upgrade failed"
+				cat upgrade.log >&2
+				exit 1
+			fi
+			
+			manage_bin
+		else
+			tool_log "no upgrade script -- reinstalling"
+			manage_unbin
+			manage_uninstall
+			manage_install
+			manage_bin
+			tool_log "upgrade complete!"
+		fi
+	fi
+}
+
+function manage_reinstall() {
+	manage_uninstall
+	manage_install 
+}
+
+function manage_full_upgrade() {
+	log "Upgrading all installed tools!"
+	succ=0
+	fail=0
+	declare -a failed
+	installed=$(manage_list -i)
+	log "Upgrading tools:\n $installed"
+	for t in $installed
+	do
+		log "Upgrading tool $t"
+		TOOL="$t"
+		if manage_upgrade; then 
+			succ=$((succ+1))
+		else
+			fail=$((fail+1))
+			failed[${#failed[@]}]="$t"
+		fi
+	done
+	log "failed to upgrade ${failed[@]}"
+	log "tool full-upgrade stats - sucess=$succ failed=$fail"
+}
+
+function manage_search() {
+	cat README.md | grep "<\!--tool-->" | sed "s/<\!--[^-]*-->//g" | grep -i "$TOOL"
+}
+
+function manage_test() {
+	if [ "$FORCE" -eq 0 ] && ! cat README.md | grep "<\!--tool-->" | grep "| \[$TOOL\](" | grep -q -- "--test--"
+	then
+		tool_log "Tests not enabled."
+		if [ "$EXPECTFAIL" -eq "1" ]; then exit 1; fi
+	else
+		if (
+			if ! manage_install; then exit 1; fi
+
+			cd $TOOL || exit 1
+			if [ -f "./test" ]
+			then
+				tool_log "Running test script."
+				if ! ./test
+				then
+					tool_log_error "$TOOL test failed!"
+					exit 1
+				fi
+				tool_log "test script succeeded!"
+			else
+				tool_log "Install succeeded. No test script!"
+			fi
+			exit 0
+		); 
+		then
+			if [ "$EXPECTFAIL" -eq "1" ]; then exit 1; else exit 0; fi
+		else
+			if [ "$EXPECTFAIL" -eq "1" ]; then exit 0; else exit 1; fi
+		fi
+	fi
+}
+
+function manage_dispatch()
+{
+	case $ACTION in
+		setup)
+			manage_setup
+			;;
+		list)
+			manage_list "$2"
+			;;
+		bin)
+			manage_bin
+			;;
+		unbin)
+			manage_unbin
+			;;
+		install)
+			manage_install
+			manage_bin
+			;;
+		uninstall)
+			manage_unbin
+			manage_uninstall
+			;;
+		upgrade)
+			if [[ "$TOOL" == "all" ]]; then
+				manage_full_upgrade
+			else
+				manage_upgrade
+			fi
+			;;
+		full-upgrade)
+			manage_full_upgrade
+			;;
+		reinstall)
+			manage_reinstall
+			;;
+		search)
+			manage_search
+			;;
+		test)
+			manage_test
+			;;
+		*)
+			log_error "unknown action $ACTION"
+			;;
+	esac
 }
 
 
@@ -242,9 +544,11 @@ fi
 
 if [ "$TOOL" == "all" ]
 then
-	for t in $($0 list)
+	for t in $(manage_list "-i")
 	do
-		$0 $ACTION $t
+		cd $(dirname "${BASH_SOURCE[0]}")/..
+		TOOL="$t"
+		manage_dispatch "$@"
 	done
 elif [ -z "$TOOL" -a "$ACTION" == "full-upgrade" ]
 then
@@ -253,187 +557,7 @@ elif [ -z "$TOOL" -a "$ACTION" != "list" -a "$ACTION" != "setup" ]
 then
 	usage
 	exit
+else
+	cd $(dirname "${BASH_SOURCE[0]}")/..
+	manage_dispatch "$@"
 fi
-
-
-cd $(dirname "${BASH_SOURCE[0]}")/..
-
-case $ACTION in
-	setup)
-
-		base_build_setup "$DISTRI"
-		;;
-	list)
-		for t in *
-		do
-			[ ! -e "$t/install" ] && continue
-
-			if [[ "$2" == "" ]]; then
-				echo "$t"
-			else
-				if is_tool_installed "$t"; then
-					if [[ "$2" == "-i" ]]; then
-						echo "$t"
-					fi
-				else
-					if [[ "$2" == "-u" ]]; then
-						echo "$t"
-					fi
-				fi
-			fi
-		done
-		;;
-	bin)
-		cd bin
-		if [ -d ../$TOOL/bin ]; then
-			ln -sf ../$TOOL/bin/* .
-			tool_log "bin symlinks updated"
-		fi
-		cd ..
-		;;
-	install)
-		cd $TOOL
-		if [ "$FORCE" -eq 0 ] && is_tool_installed "."
-		then
-			tool_log "appears to already be installed. Uninstall first?"
-			exit 0
-		fi
-
-		# the first line in all install and uninstall scripts should have the -e flag, otherwise fail
-		if [ $(for i in install* uninstall test; do if [ -e "$i" ]; then head -1 "$i"; fi; done | sort | uniq | grep -v '^#!/bin/bash -ex$' | wc -l) -ne 0 ];
-		then
-			tool_log "not all install/uninstall/test scripts start with '#!/bin/bash -ex', which is a must for accurate testing."
-			exit 1
-		fi
-
-		tool_log "starting install, logging to $PWD/install.log"
-		rm -f install.log
-
-		# first get distri specific dependencies
-		if [[ $(find . -name 'install-root*' | wc -l) -ge 1 ]]; then
-			INSTALL_ROOT_SCRIPT="./install-root-$DISTRI"
-			# use debian install script if we are on ubuntu and no ubuntu
-			# specific install script exists
-			if [[ "$DISTRI" == "ubuntu" \
-				&& ! -x "$INSTALL_ROOT_SCRIPT" \
-				&& -x "./install-root-debian" ]]
-			then
-				INSTALL_ROOT_SCRIPT="./install-root-debian"
-			fi
-			if [[ -x "$INSTALL_ROOT_SCRIPT" && "$ALLOW_SUDO" -eq 1 ]]; then
-				if ! sudo env DISTRI=$DISTRI "$INSTALL_ROOT_SCRIPT" >> install.log 2>&1;
-				then
-					tool_log "INSTALL FAILED"
-					cat install.log >&2
-					exit 1
-				fi
-			else
-				tool_log "Warning: make sure build dependencies are installed!"
-			fi
-		fi
-
-		# execute install script
-		set +e
-		if [ "$VERBOSE_OUTPUT" -eq 1 ]; then
-			DISTRI=$DISTRI ./install 2>&1 | tee -a install.log
-		else
-			DISTRI=$DISTRI ./install >>install.log 2>&1
-		fi
-		INSTALL_FAILED=$?
-		set -e
-
-		if [ "$INSTALL_FAILED" -eq 0 ]; then
-			tool_log "install finished"
-		else
-			tool_log "INSTALL FAILED"
-			cat install.log >&2
-			exit 1
-		fi
-
-		cd ..
-		$0 bin $TOOL
-		;;
-	uninstall)
-		cd $TOOL
-
-		tool_log "starting uninstall, logging to $PWD/uninstall.log"
-		[ -x ./uninstall ] && ./uninstall >> uninstall.log 2>&1
-		git clean -dffx . >/dev/null 2>&1
-		tool_log "uninstall finished"
-
-		cd ..
-		;;
-	upgrade)
-		cd $TOOL
-		if [ -x ./upgrade ]
-		then
-			./upgrade
-			tool_log "upgrade complete!"
-		else
-			tool_log "no upgrade script -- reinstalling"
-			$0 uninstall $TOOL
-			$0 install $TOOL
-		fi
-		;;
-	full-upgrade)
-		log "Upgrading all installed tools!"
-		succ=0
-		fail=0
-		declare -a failed
-		installed=$($0 list -i)
-		log "Upgrading tools: $installed"
-		for t in $installed
-		do
-			log "Upgrading tool $t"
-			if $0 upgrade $t; then 
-				succ=$((succ+1))
-			else
-				fail=$((fail+1))
-				failed[${#failed[@]}]="$t"
-			fi
-		done
-		log "failed to upgrade ${failed[@]}"
-		log "tool full-upgrade stats - sucess=$succ failed=$fail"
-		;;
-	reinstall)
-		$0 uninstall $TOOL
-		$0 install $TOOL
-		;;
-	search)
-		cat README.md | grep "<\!--tool-->" | sed "s/<\!--[^-]*-->//g" | grep -i "$TOOL"
-		;;
-	test)
-		if [ "$FORCE" -eq 0 ] && ! cat README.md | grep "<\!--tool-->" | grep "| \[$TOOL\](" | grep -q -- "--test--"
-		then
-			tool_log "Tests not enabled."
-			if [ "$EXPECTFAIL" -eq "1" ]; then exit 1; fi
-		else
-			if (
-			if ! $0 install $TOOL; then exit 1; fi
-
-			cd $TOOL || exit 1
-			if [ -f ./test ]
-			then
-				tool_log "Running test script."
-				if ! ./test
-				then
-					tool_log "$TOOL test failed!"
-					exit 1
-				fi
-				tool_log "test script succeeded!"
-			else
-				tool_log "Install succeeded. No test script!"
-			fi
-			exit 0
-			); 
-			then
-				if [ "$EXPECTFAIL" -eq "1" ]; then exit 1; else exit 0; fi
-			else
-				if [ "$EXPECTFAIL" -eq "1" ]; then exit 0; else exit 1; fi
-			fi
-		fi
-		;;
-	*)
-		echo "TOOLS | ERROR | unknown action $ACTION"
-		;;
-esac
