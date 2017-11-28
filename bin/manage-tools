@@ -32,6 +32,17 @@ function tool_log()
 	echo "$(tput setaf 4 2>/dev/null)TOOLS | $TOOL |$(tput sgr0 2>/dev/null) $@"
 }
 
+function setup_log()
+{
+	printf "$(tput setaf 6 2>/dev/null)SETUP | $(tput sgr0 2>/dev/null) $@"
+}
+
+
+function log()
+{
+	printf "$(tput setaf 2 2>/dev/null)ctf-tools | $(tput sgr0 2>/dev/null) $@"
+}
+
 
 function detect_distribution()
 {
@@ -60,7 +71,7 @@ function base_build_setup_debian()
 		if [ "$ALLOW_SUDO" -eq 1 ]; then
 			sudo apt-get -y install $PACKAGE_REQS
 		else
-			TOOL=SETUP tool_log "Please install the following packages: $PACKAGE_REQS"
+			setup_log "Please install the following packages: $PACKAGE_REQS"
 		fi
 	fi
 
@@ -71,7 +82,7 @@ function base_build_setup_debian()
 			sudo dpkg --add-architecture i386
 			sudo apt-get update
 		else
-			TOOL=SETUP tool_log "Certain tools need i386 libraries (enable with 'dpkg --add-architecture i386; apt-get update')."
+			setup_log "Certain tools need i386 libraries (enable with 'dpkg --add-architecture i386; apt-get update')."
 		fi
 	fi
 }
@@ -84,7 +95,7 @@ function base_build_setup_arch()
 		sudo pacman -Syu --noconfirm --needed $PACKAGE_REQS
 		sudo pacman -Syu --noconfirm --needed base-devel || true
 	else
-		TOOL=SETUP tool_log "Please install the following packages: $PACKAGE_REQS"
+		setup_log "Please install the following packages: $PACKAGE_REQS"
 	fi
 
 	if ! grep "^\[multilib\]$" /etc/pacman.conf >/dev/null; then
@@ -95,7 +106,7 @@ function base_build_setup_arch()
 Include = /etc/pacman.d/mirrorlist
 EOF
 		else
-			TOOL=SETUP tool_log "Certain tools need i386 libraries (enable multilib in /etc/pacman.conf')."
+			setup_log "Certain tools need i386 libraries (enable multilib in /etc/pacman.conf')."
 			return
 		fi
 	fi
@@ -119,7 +130,7 @@ function base_build_setup_fedora()
 	if [ "$ALLOW_SUDO" -eq 1 ]; then
 		sudo dnf -y install $PACKAGE_REQS
 	else
-		TOOL=SETUP tool_log "Please install the following packages: $PACKAGE_REQS"
+		setup_log "Please install the following packages: $PACKAGE_REQS"
 	fi
 
 	# TODO: check whether we have to explicitly enable i386 package support
@@ -142,7 +153,7 @@ function base_build_setup()
 			base_build_setup_fedora
 			;;
 		*)
-			TOOL=SETUP tool_log "Cannot detect or unsupported distribution"
+			setup_log "Cannot detect or unsupported distribution"
 	esac
 
 	## setup PATH for several shells
@@ -365,24 +376,24 @@ case $ACTION in
 		fi
 		;;
 	full-upgrade)
-		TOOL="FULL-UPGRADE" tool_log "Upgrading all installed tools!"
+		log "Upgrading all installed tools!"
 		succ=0
 		fail=0
 		declare -a failed
 		installed=$($0 list -i)
-		TOOL="FULL-UPGRADE" tool_log "Upgrading tools: $installed"
+		log "Upgrading tools: $installed"
 		for t in $installed
 		do
-			TOOL="FULL-UPGRADE" tool_log "Upgrading tool $t"
-			if $0 upgrade $t; then
+			log "Upgrading tool $t"
+			if $0 upgrade $t; then 
 				succ=$((succ+1))
 			else
 				fail=$((fail+1))
 				failed[${#failed[@]}]="$t"
 			fi
 		done
-		TOOL="FULL-UPGRADE" tool_log "failed to upgrade ${failed[@]}"
-		TOOL="FULL-UPGRADE" tool_log "tool full-upgrade stats - sucess=$succ failed=$fail"
+		log "failed to upgrade ${failed[@]}"
+		log "tool full-upgrade stats - sucess=$succ failed=$fail"
 		;;
 	reinstall)
 		$0 uninstall $TOOL
