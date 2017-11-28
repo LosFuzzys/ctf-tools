@@ -221,7 +221,7 @@ function manage_setup() {
 }
 
 function manage_list() {
-	for t in ./*
+	for t in *
 	do
 		[ ! -e "$t/install" ] && continue
 
@@ -242,27 +242,28 @@ function manage_list() {
 }
 
 function manage_bin() {
-	cd bin
+	pushd "$CTF_TOOLS_ROOT/bin" >/dev/null
 	if [ -d ../$TOOL/bin ]; then
 		ln -sf ../$TOOL/bin/* .
 		tool_log "bin symlinks updated"
 	fi
-	cd ..
+	popd >/dev/null
 }
 
 function manage_unbin() {
-	cd bin
+	pushd "$CTF_TOOLS_ROOT/bin" >/dev/null
 	if [ -d ../$TOOL/bin ]; then
 		for l in ../$TOOL/bin/*; do
 			rm $(basename "$l")
 		done
 		tool_log "bin symlinks updated"
 	fi
-	cd ..
+	popd >/dev/null
 }
 
 function manage_install() {
-	cd $TOOL
+	pushd "$CTF_TOOLS_ROOT/$TOOL" >/dev/null
+
 	if [ "$FORCE" -eq 0 ] && is_tool_installed "."
 	then
 		tool_log "appears to already be installed. Uninstall first?"
@@ -320,11 +321,11 @@ function manage_install() {
 		exit 1
 	fi
 
-	cd ..
+	popd >/dev/null
 }
 
 function manage_uninstall() {
-	cd $TOOL
+    pushd "$CTF_TOOLS_ROOT/$TOOL" >/dev/null
 
 	local UNINSTALL_FAILED
 
@@ -349,12 +350,13 @@ function manage_uninstall() {
 	git clean -dffx . >/dev/null 2>&1
 	tool_log "uninstall finished"
 
-	cd ..
+    popd >/dev/null
 }
 
 
 function manage_upgrade() {
-	cd $TOOL
+	pushd "$CTF_TOOLS_ROOT/$TOOL" >/dev/null
+
 	if is_tool_installed "."; then
 		if [ -x ./upgrade ]
 		then
@@ -387,6 +389,8 @@ function manage_upgrade() {
 			tool_log "upgrade complete!"
 		fi
 	fi
+
+    popd >/dev/null
 }
 
 function manage_reinstall() {
@@ -417,7 +421,10 @@ function manage_full_upgrade() {
 }
 
 function manage_search() {
-	cat README.md | grep "<\!--tool-->" | sed "s/<\!--[^-]*-->//g" | grep -i "$TOOL"
+	cat "$CTF_TOOLS_ROOT/README.md" \
+        | grep "<\!--tool-->" \
+        | sed "s/<\!--[^-]*-->//g" \
+        | grep -i "$TOOL"
 }
 
 function manage_test() {
@@ -429,7 +436,7 @@ function manage_test() {
 		if (
 			if ! manage_install; then exit 1; fi
 
-			cd $TOOL || exit 1
+			cd "$CTF_TOOLS_ROOT/$TOOL" || exit 1
 			if [ -f "./test" ]
 			then
 				tool_log "Running test script."
@@ -454,12 +461,14 @@ function manage_test() {
 
 function manage_dispatch()
 {
+	pushd "$CTF_TOOLS_ROOT/" >/dev/null
+
 	case $ACTION in
 		setup)
 			manage_setup
 			;;
 		list)
-			manage_list "$2"
+            manage_list "${2:-}"
 			;;
 		bin)
 			manage_bin
@@ -478,6 +487,7 @@ function manage_dispatch()
 		upgrade)
 			if [[ "$TOOL" == "all" ]]; then
 				manage_full_upgrade
+                exit $?
 			else
 				manage_upgrade
 			fi
@@ -498,6 +508,8 @@ function manage_dispatch()
 			log_error "unknown action $ACTION"
 			;;
 	esac
+
+    popd >/dev/null
 }
 
 
@@ -546,18 +558,13 @@ if [ "$TOOL" == "all" ]
 then
 	for t in $(manage_list "-i")
 	do
-		cd $(dirname "${BASH_SOURCE[0]}")/..
 		TOOL="$t"
 		manage_dispatch "$@"
 	done
-elif [ -z "$TOOL" -a "$ACTION" == "full-upgrade" ]
-then
-	TOOL=""
-elif [ -z "$TOOL" -a "$ACTION" != "list" -a "$ACTION" != "setup" ]
+elif [ -z "$TOOL" -a "$ACTION" != "list" -a "$ACTION" != "setup" -a "$ACTION" != "full-upgrade" ]
 then
 	usage
 	exit
-else
-	cd $(dirname "${BASH_SOURCE[0]}")/..
-	manage_dispatch "$@"
 fi
+
+manage_dispatch "$@"
